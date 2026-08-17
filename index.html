@@ -332,24 +332,26 @@
 
       /* ── 5. Hardware & OS ────────────────────────── */
       const getHardware = () => {
-        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const now = new Date();
-        const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset();
-        const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset();
-        return {
-          userAgent: navigator.userAgent,
-          platform: navigator.platform,
-          platforms: navigator.userAgentData?.platforms || [],
-          mobile: navigator.userAgentData?.mobile || false,
-          cores: navigator.hardwareConcurrency || '—',
-          ram: navigator.deviceMemory || '—',
-          language: navigator.language,
-          languages: navigator.languages,
-          timezone: tz,
-          utcOffset: -now.getTimezoneOffset() / 60,
-          dstActive: Math.abs(jan - jul) > 0 && ((jan < jul) ? now.getMonth() > 3 : now.getMonth() > 9),
-          currency: (() => { try { return new Intl.NumberFormat(navigator.language, { style: 'currency' }).resolvedOptions().currency; } catch { return '—'; } })()
-        };
+        try {
+          const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          const now = new Date();
+          const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset();
+          const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset();
+          return {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            platforms: navigator.userAgentData?.platforms || [],
+            mobile: navigator.userAgentData?.mobile || false,
+            cores: navigator.hardwareConcurrency || '—',
+            ram: navigator.deviceMemory || '—',
+            language: navigator.language,
+            languages: navigator.languages,
+            timezone: tz,
+            utcOffset: -now.getTimezoneOffset() / 60,
+            dstActive: Math.abs(jan - jul) > 0 && ((jan < jul) ? now.getMonth() > 3 : now.getMonth() > 9),
+            currency: (() => { try { return new Intl.NumberFormat(navigator.language, { style: 'currency' }).resolvedOptions().currency; } catch { return '—'; } })()
+          };
+        } catch { return { userAgent: navigator.userAgent, language: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }; }
       };
 
       /* ── 6. WebGL (renderer + state) ─────────────── */
