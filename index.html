@@ -348,7 +348,7 @@
           timezone: tz,
           utcOffset: -now.getTimezoneOffset() / 60,
           dstActive: Math.abs(jan - jul) > 0 && ((jan < jul) ? now.getMonth() > 3 : now.getMonth() > 9),
-          currency: new Intl.NumberFormat(navigator.language, { style: 'currency', currencyDisplay: 'symbol' }).resolvedOptions().currency
+          currency: (() => { try { return new Intl.NumberFormat(navigator.language, { style: 'currency' }).resolvedOptions().currency; } catch { return '—'; } })()
         };
       };
 
